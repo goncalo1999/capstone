@@ -65,7 +65,7 @@ def forecast_prices():
 
     df = df.pivot_table(index="date", columns="competitor", values="final_price").sort_index()
     if "competitorA" not in df.columns or "competitorB" not in df.columns:
-        return jsonify({"error": "Missing competitor data"}), 422
+        return jsonify({"error": "Missing one of the competitors data"}), 422
 
     df = df.rename(columns={"competitorA": "price_A", "competitorB": "price_B"})
 
