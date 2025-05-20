@@ -1,0 +1,13 @@
+# it was already here and now I'm afraid to delete
+portal/dataset.csv
+# heavy dataset
+data/train.csv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Development - until I figure out a better way
+dev/
+
+# Database
+predictions.db
