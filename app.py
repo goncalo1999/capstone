@@ -44,6 +44,12 @@ prices["date"] = pd.to_datetime(prices["time_key"].astype(str), format="%Y%m%d")
 # Create Flask app
 app = Flask(__name__)
 
+@app.after_request
+def log_response(response):
+    app.logger.warning(f"Response status: {response}")
+    # app.logger.info(f"Response body: {response.get_data(as_text=True)}")
+    return response
+
 @app.route('/forecast_prices/', methods=['POST'])
 def forecast_prices():
     try:
@@ -58,6 +64,7 @@ def forecast_prices():
 
         if sku_raw is None or time_key is None:
             print("Missing required fields: 'sku' and 'time_key'")
+            log_response("Missing required fields: 'sku' and 'time_key'")
             return jsonify({"error": "Missing required fields: 'sku' and 'time_key'"}), 422
         
         try:
