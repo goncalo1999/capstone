@@ -56,38 +56,37 @@ def forecast_prices():
         payload = request.get_json()
 
         if not payload:
-            print("Empty request body")
+            log_response("Empty request body")
             return jsonify({"error": "Empty request body"}), 422
         
         sku_raw = payload.get('sku')
         time_key = int(payload['time_key'])
 
         if sku_raw is None or time_key is None:
-            print("Missing required fields: 'sku' and 'time_key'")
             log_response("Missing required fields: 'sku' and 'time_key'")
             return jsonify({"error": "Missing required fields: 'sku' and 'time_key'"}), 422
         
         try:
             sku = int(sku_raw)
         except (TypeError, ValueError):
-            print(f"Error parsing SKU: {sku_raw}")
+            log_response("Invalid SKU format")
             return jsonify({"error": "SKU must be a valid integer"}), 422
         
         try:
             target_date = pd.to_datetime(str(time_key), format="%Y%m%d") ## ver melhor isto
         except (TypeError, ValueError):
-            print(f"Error parsing time_key: {time_key}")
+            log_response("Invalid time_key format")
             return jsonify({"error": "time_key in invalid format"}), 422
         
     except Exception:
-        print("Error parsing JSON")
+        log_response("Error parsing JSON")
         return jsonify({"error": "Invalid input format"}), 422
 
     # Filter data for SKU
     df = prices[prices["sku"] == sku]
     df = df[df["competitor"].isin(["competitorA", "competitorB"])]
     if df.empty:
-        print(f"SKU {sku} not found in the dataset.")
+        log_response(f"SKU {sku} not found in the dataset.")
         return jsonify({"error": "SKU not found"}), 422
 
     df = df.pivot_table(index="date", columns="competitor", values="final_price").sort_index()
@@ -108,7 +107,7 @@ def forecast_prices():
 
     history = history.dropna()
     if history.empty:
-        print("Not enough historical data")
+        log_response("Not enough historical data")
         return jsonify({"error": "Not enough historical data"}), 422
 
     # Extract last row of features
@@ -127,7 +126,7 @@ def forecast_prices():
             pvp_is_competitorB=round(pred_B, 2),
         )
     except IntegrityError:
-        print(f"SKU {sku} and time_key {time_key} already exists in the database.")
+        log_response(f"SKU {sku} and time_key {time_key} already exists in the database.")
         return jsonify({"error": "sku and time_key already exists"})
     
     response = jsonify({
