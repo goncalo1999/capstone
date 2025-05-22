@@ -14,11 +14,14 @@ from playhouse.db_url import connect
 # Database config
 DB = connect(os.environ.get('DATABASE_URL') or 'sqlite:///predictions.db')
 
+
 class Prediction(Model):
     sku = TextField()
     time_key = IntegerField()
     pvp_is_competitorA = FloatField()
     pvp_is_competitorB = FloatField()
+    pvp_is_competitorA_actual = FloatField(null=True)
+    pvp_is_competitorB_actual = FloatField(null=True)
 
     class Meta:
         database = DB
@@ -41,19 +44,38 @@ prices["date"] = pd.to_datetime(prices["time_key"].astype(str), format="%Y%m%d")
 # Create Flask app
 app = Flask(__name__)
 
+@app.after_request
+def log_response(response):
+    app.logger.info(f"Response status: {response.status}")
+    app.logger.info(f"Response body: {response.get_data(as_text=True)}")
+    return response
 
 @app.route('/forecast_prices/', methods=['POST'])
 def forecast_prices():
     try:
         payload = request.get_json()
+
+        app.logger.info(f"Received data: {payload}")
+
+        if not payload:
+            return jsonify({"error": "Empty request body"}), 422
+        
         sku_raw = payload.get('sku')
+        time_key = int(payload['time_key'])
+
+        if sku_raw is None or time_key is None:
+            return jsonify({"error": "Missing required fields: 'sku' and 'time_key'"}), 422
+        
         try:
             sku = int(sku_raw)
         except (TypeError, ValueError):
             return jsonify({"error": "SKU must be a valid integer"}), 422
         
-        time_key = int(payload['time_key'])
-        target_date = pd.to_datetime(str(time_key), format="%Y%m%d")
+        try:
+            target_date = pd.to_datetime(str(time_key), format="%Y%m%d") ## ver melhor isto
+        except (TypeError, ValueError):
+            return jsonify({"error": "time_key in invalid format"}), 422
+        
     except Exception:
         return jsonify({"error": "Invalid input format"}), 422
 
@@ -100,15 +122,17 @@ def forecast_prices():
         )
     except IntegrityError:
         return jsonify({"error": "sku and time_key already exists"})
-
-
-    return jsonify({
+    
+    response = jsonify({
         "sku": str(sku),
         "time_key": time_key,
         "pvp_is_competitorA": round(pred_A, 2),
         "pvp_is_competitorB": round(pred_B, 2)
     })
 
+    app.logger.info(f"Response body: {response}")
+
+    return response
 
 
 @app.route('/actual_prices/', methods=['POST'])
