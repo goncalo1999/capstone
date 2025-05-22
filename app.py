@@ -144,11 +144,32 @@ def forecast_prices():
 def actual_prices():
     try:
         payload = request.get_json()
-        sku = str(payload['sku'])
-        time_key = int(payload['time_key'])
-        pvp_actual_A = float(payload['pvp_is_competitorA_actual'])
-        pvp_actual_B = float(payload['pvp_is_competitorB_actual'])
+
+        if not payload:
+            log_response("Empty request body")
+            return jsonify({"error": "Empty request body"}), 422
+
+        required_fields = [
+            "sku", "time_key",
+            "pvp_is_competitorA_actual", "pvp_is_competitorB_actual"
+        ]
+
+        if not all(field in payload for field in required_fields):
+            log_response("Missing one or more required fields")
+            return jsonify({"error": "Missing one or more required fields"}), 422
+        
+
+        try:
+            sku = str(payload["sku"])
+            time_key = int(payload["time_key"])
+            pvp_actual_A = float(payload["pvp_is_competitorA_actual"])
+            pvp_actual_B = float(payload["pvp_is_competitorB_actual"])
+        except (TypeError, ValueError):
+            log_response("Incorrect field types")
+            return jsonify({"error": "Incorrect field types"}), 422
+        
     except (KeyError, ValueError, TypeError):
+        log_response("Error parsing JSON")
         return jsonify({"error": "Invalid input format"}), 422
 
     try:
@@ -157,6 +178,7 @@ def actual_prices():
         record.pvp_is_competitorB_actual = pvp_actual_B
         record.save()
     except Prediction.DoesNotExist:
+        log_response(f"SKU {sku} and time_key {time_key} not found in the database.")
         return jsonify({"error": "SKU and time_key combination not found"}), 422
     
     response = jsonify({
@@ -167,8 +189,6 @@ def actual_prices():
         "pvp_is_competitorA_actual": pvp_actual_A,
         "pvp_is_competitorB_actual": pvp_actual_B
     })
-
-    print(f"Response: {response}")
 
     return response
 
