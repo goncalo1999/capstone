@@ -35,10 +35,10 @@ DB.create_tables([Prediction], safe=True)
 model_A = joblib.load("model_compA.pkl")
 model_B = joblib.load("model_compB.pkl")
 prices = pd.read_csv("data/product_prices_leaflets.csv")
-df_structures = pd.read_csv("product_structures_sales.csv")
-df_structures["date"] = pd.to_datetime(df_structures["time_key"].astype(str), format="%Y%m%d")
-df_structures = df_structures[df_structures["quantity"] >= 0]
-print("df_structures columns:", df_structures.columns.tolist())
+# df_structures = pd.read_csv("product_structures_sales.csv")
+# df_structures["date"] = pd.to_datetime(df_structures["time_key"].astype(str), format="%Y%m%d")
+# df_structures = df_structures[df_structures["quantity"] >= 0]
+# print("df_structures columns:", df_structures.columns.tolist())
 
 # Preprocess price data
 # prices = prices[prices["discount"] >= 0].copy()
@@ -94,16 +94,16 @@ def forecast_prices():
             log_response(f"SKU {sku} missing data for {comp_label}")
             return jsonify({"error": f"SKU missing data for {comp_label}"}), 422
 
-        df_comp = df_comp.merge(
-            df_structures[["sku", "date", "quantity", "structure_level_1", "structure_level_2"]],
-            on=["sku", "date"],
-            how="left"
-        )
+        # df_comp = df_comp.merge(
+        #     df_structures[["sku", "date", "quantity", "structure_level_1", "structure_level_2"]],
+        #     on=["sku", "date"],
+        #     how="left"
+        # )
 
         df_comp = df_comp.sort_values(by="date")
-        df_comp["quantity"] = df_comp["quantity"].fillna(0)
-        df_comp["structure_level_1"] = df_comp["structure_level_1"].ffill().bfill()
-        df_comp["structure_level_2"] = df_comp["structure_level_2"].ffill().bfill()
+        # df_comp["quantity"] = df_comp["quantity"].fillna(0)
+        # df_comp["structure_level_1"] = df_comp["structure_level_1"].ffill().bfill()
+        # df_comp["structure_level_2"] = df_comp["structure_level_2"].ffill().bfill()
 
         df_comp = df_comp[df_comp["date"] < target_date]
         if df_comp.empty:
@@ -117,8 +117,8 @@ def forecast_prices():
         for lag in [1, 7, 15]:
             df_comp[f"final_price_lag_{lag}"] = df_comp["final_price"].shift(lag)
             df_comp[f"final_price_roll_{lag}"] = df_comp["final_price"].rolling(lag).mean()
-            df_comp[f"quantity_lag_{lag}"] = df_comp["quantity"].shift(lag)
-            df_comp[f"quantity_roll_{lag}"] = df_comp["quantity"].rolling(lag).mean()
+            # df_comp[f"quantity_lag_{lag}"] = df_comp["quantity"].shift(lag)
+            # df_comp[f"quantity_roll_{lag}"] = df_comp["quantity"].rolling(lag).mean()
 
         df_comp.dropna(inplace=True)
         if df_comp.empty:
@@ -127,10 +127,10 @@ def forecast_prices():
 
         lag_features = [col for col in df_comp.columns if "lag" in col or "roll" in col]
         time_features = ["day_of_week", "month"]
-        cat_features = ["structure_level_1", "structure_level_2"]
+        # cat_features = ["structure_level_1", "structure_level_2"]
 
-        df_comp[cat_features] = df_comp[cat_features].astype("category")
-        features = df_comp.iloc[-1:][lag_features + time_features + cat_features]
+        # df_comp[cat_features] = df_comp[cat_features].astype("category")
+        features = df_comp.iloc[-1:][lag_features + time_features]
 
         preds[comp_label] = float(model.predict(features)[0])
 
