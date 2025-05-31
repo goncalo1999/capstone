@@ -6,7 +6,7 @@ import pandas as pd
 from flask import Flask, jsonify, request
 from peewee import (
     Model, TextField, FloatField, IntegerField,
-    IntegrityError, CompositeKey
+    IntegrityError
 )
 from playhouse.shortcuts import model_to_dict
 from playhouse.db_url import connect
@@ -35,6 +35,10 @@ DB.create_tables([Prediction], safe=True)
 model_A = joblib.load("model_compA.pkl")
 model_B = joblib.load("model_compB.pkl")
 prices = pd.read_csv("data/product_prices_leaflets.csv")
+df_structures = pd.read_csv("product_structures_sales.csv")
+df_structures["date"] = pd.to_datetime(df_structures["time_key"].astype(str), format="%Y%m%d")
+df_structures = df_structures[df_structures["quantity"] >= 0]
+print("df_structures columns:", df_structures.columns.tolist())
 
 # Preprocess price data
 # prices = prices[prices["discount"] >= 0].copy()
@@ -58,86 +62,96 @@ def forecast_prices():
         if not payload:
             log_response("Empty request body")
             return jsonify({"error": "Empty request body"}), 422
-        
+
         sku_raw = payload.get('sku')
         time_key = int(payload['time_key'])
 
         if sku_raw is None or time_key is None:
             log_response("Missing required fields: 'sku' and 'time_key'")
             return jsonify({"error": "Missing required fields: 'sku' and 'time_key'"}), 422
-        
+
         try:
             sku = int(sku_raw)
         except (TypeError, ValueError):
             log_response("Invalid SKU format")
             return jsonify({"error": "SKU must be a valid integer"}), 422
-        
+
         try:
-            target_date = pd.to_datetime(str(time_key), format="%Y%m%d") ## ver melhor isto
+            target_date = pd.to_datetime(str(time_key), format="%Y%m%d")
         except (TypeError, ValueError):
             log_response("Invalid time_key format")
             return jsonify({"error": "time_key in invalid format"}), 422
-        
+
     except Exception:
         log_response("Error parsing JSON")
         return jsonify({"error": "Invalid input format"}), 422
 
-    # Filter data for SKU
-    df = prices[prices["sku"] == sku]
-    df = df[df["competitor"].isin(["competitorA", "competitorB"])]
-    if df.empty:
-        log_response(f"SKU {sku} not found in the dataset.")
-        return jsonify({"error": "SKU not found"}), 422
+    preds = {}
 
-    df = df.pivot_table(index="date", columns="competitor", values="final_price").sort_index()
-    if "competitorA" not in df.columns or "competitorB" not in df.columns:
-        return jsonify({"error": "Missing one of the competitors data"}), 422
+    for comp_label, model in [("competitorA", model_A), ("competitorB", model_B)]:
+        df_comp = prices[(prices["sku"] == sku) & (prices["competitor"] == comp_label)].copy()
+        if df_comp.empty:
+            log_response(f"SKU {sku} missing data for {comp_label}")
+            return jsonify({"error": f"SKU missing data for {comp_label}"}), 422
 
-    df = df.rename(columns={"competitorA": "price_A", "competitorB": "price_B"})
+        df_comp = df_comp.merge(
+            df_structures[["sku", "date", "quantity", "structure_level_1", "structure_level_2"]],
+            on=["sku", "date"],
+            how="left"
+        )
 
-    # Create lag and rolling features
-    history = df[df.index < target_date].copy()
+        df_comp = df_comp.sort_values(by="date")
+        df_comp["quantity"] = df_comp["quantity"].fillna(0)
+        df_comp["structure_level_1"] = df_comp["structure_level_1"].ffill().bfill()
+        df_comp["structure_level_2"] = df_comp["structure_level_2"].ffill().bfill()
 
-    history["final_price"] = history["price_A"]
+        df_comp = df_comp[df_comp["date"] < target_date]
+        if df_comp.empty:
+            log_response(f"Not enough historical data for {comp_label}")
+            return jsonify({"error": f"Not enough historical data for {comp_label}"}), 422
 
-    # Then build features using that column
-    for lag in [1, 3, 7]:
-        history[f"final_price_lag_{lag}"] = history["final_price"].shift(lag)
-        history[f"final_price_roll_{lag}"] = history["final_price"].rolling(lag).mean()
+        df_comp.set_index("date", inplace=True)
+        df_comp["day_of_week"] = df_comp.index.dayofweek
+        df_comp["month"] = df_comp.index.month
 
-    history = history.dropna()
-    if history.empty:
-        log_response("Not enough historical data")
-        return jsonify({"error": "Not enough historical data"}), 422
+        for lag in [1, 7, 15]:
+            df_comp[f"final_price_lag_{lag}"] = df_comp["final_price"].shift(lag)
+            df_comp[f"final_price_roll_{lag}"] = df_comp["final_price"].rolling(lag).mean()
+            df_comp[f"quantity_lag_{lag}"] = df_comp["quantity"].shift(lag)
+            df_comp[f"quantity_roll_{lag}"] = df_comp["quantity"].rolling(lag).mean()
 
-    # Extract last row of features
-    features = history.iloc[-1:][[col for col in history.columns if col.startswith("final_price_")]]
+        df_comp.dropna(inplace=True)
+        if df_comp.empty:
+            log_response(f"Not enough data after creating features for {comp_label}")
+            return jsonify({"error": f"Not enough data for {comp_label}"}), 422
 
+        lag_features = [col for col in df_comp.columns if "lag" in col or "roll" in col]
+        time_features = ["day_of_week", "month"]
+        cat_features = ["structure_level_1", "structure_level_2"]
 
-    # Predict using both models
-    pred_A = float(model_A.predict(features)[0])
-    pred_B = float(model_B.predict(features)[0])
+        df_comp[cat_features] = df_comp[cat_features].astype("category")
+        features = df_comp.iloc[-1:][lag_features + time_features + cat_features]
+
+        preds[comp_label] = float(model.predict(features)[0])
 
     try:
         Prediction.create(
             sku=str(sku),
             time_key=time_key,
-            pvp_is_competitorA=round(pred_A, 2),
-            pvp_is_competitorB=round(pred_B, 2),
+            pvp_is_competitorA=round(preds["competitorA"], 2),
+            pvp_is_competitorB=round(preds["competitorB"], 2),
         )
     except IntegrityError:
         log_response(f"SKU {sku} and time_key {time_key} already exists in the database.")
         return jsonify({"error": "sku and time_key already exists"})
-    
-    response = jsonify({
+
+    return jsonify({
         "sku": str(sku),
         "time_key": time_key,
-        "pvp_is_competitorA": round(pred_A, 2),
-        "pvp_is_competitorB": round(pred_B, 2)
+        "pvp_is_competitorA": round(preds["competitorA"], 2),
+        "pvp_is_competitorB": round(preds["competitorB"], 2)
     })
 
-    
-    return response
 
 
 @app.route('/actual_prices/', methods=['POST'])
